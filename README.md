@@ -422,6 +422,8 @@ All pipeline activity is logged to both **stdout** and **`pipeline.log`**. Log l
 
 ---
 
-## 📜 License
+## License
 
-This project is for research and educational purposes. Please respect YouTube's Terms of Service when downloading videos. The trained model weights and datasets may have their own licensing terms — check the respective Kaggle dataset pages.
+This repository's code (data pipeline, training scripts) is licensed under GPL-3.0.
+Trained model weights and datasets are subject to the individual licenses of their
+source Kaggle datasets — see DATASETS.md for attribution.
