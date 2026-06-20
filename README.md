@@ -36,6 +36,20 @@ An end-to-end Python pipeline that **discovers** Indian dashcam videos on YouTub
 
 ## 📐 Architecture
 
+<p align="center">
+  <img src="assets/architecture.png" alt="Component diagram of the pipeline" width="100%"/>
+</p>
+
+The pipeline is organized into five subsystems, shown in the diagram above:
+
+| Subsystem | Components | Responsibility |
+|---|---|---|
+| **Orchestration** | `settings.py`, `pipeline.py` | Loads config, drives the CLI, configures and starts every other subsystem |
+| **Discovery** | `scraper.py` | Searches YouTube via keywords, produces candidate videos onto the queue |
+| **Processing** | `downloader.py`, `extractor.py`, `detector.py` | Consumes the queue: download → extract frames (via FFmpeg) → run YOLOv8 inference |
+| **Storage** | `db.py`, PostgreSQL tables, in-memory `Queue` | Persists videos/frames/detections; backs the producer–consumer work queue |
+| **Support** | `keyword_generator.py`, `scripts/query_appearances.py` | Standalone tools — generate search keywords, analyze stored detections |
+
 ```
 ┌──────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
 │   Scraper    │────▸│    discovered_videos     │────▸│  Worker Thread  │
@@ -49,6 +63,8 @@ An end-to-end Python pipeline that **discovers** Indian dashcam videos on YouTub
 │              │     │  indexed on status       │     │                 │
 └──────────────┘     └─────────────────────────┘     └─────────────────┘
 ```
+
+> **Note on the queue:** there are two coordination layers, both visible in the diagram above. The **in-memory `queue.Queue`** signals worker threads immediately when the producer finds a new video (fast path, current session only). The **`discovered_videos` Postgres table** is the durable, crash-safe record of every video's status — it's what `--workers-only` and crash recovery read from, independent of whether the process restarted.
 
 ### Pipeline Flow
 
@@ -74,18 +90,18 @@ Keywords ──→ YouTube Search                  claim_next_video()
 TrafficSIgns/
 ├── config/
 │   ├── __init__.py
-│   └── settings.py              # Dataclass config — all env-var overridable
+│   └── settings.py              # Orchestration — Dataclass config, env-var overridable
 ├── src/
 │   ├── __init__.py
-│   ├── scraper.py               # InnerTube search via pytubefix (producer)
-│   ├── downloader.py            # Video download (progressive + adaptive)
-│   ├── extractor.py             # Frame extraction via ffmpeg subprocess
-│   ├── detector.py              # YOLOv8 batch inference
-│   └── db.py                    # PostgreSQL CRUD + discovered_videos queue
+│   ├── scraper.py               # Discovery   — InnerTube search via pytubefix (producer)
+│   ├── downloader.py            # Processing  — Video download (progressive + adaptive)
+│   ├── extractor.py             # Processing  — Frame extraction via ffmpeg subprocess
+│   ├── detector.py              # Processing  — YOLOv8 batch inference
+│   └── db.py                    # Storage     — PostgreSQL CRUD + discovered_videos queue
 ├── scripts/
-│   └── query_appearances.py     # Standalone appearance duration query
-├── pipeline.py                  # Producer-consumer CLI orchestrator
-├── keyword_generator.py         # Generates combinatorial_keywords.txt
+│   └── query_appearances.py     # Support     — Standalone appearance duration query
+├── pipeline.py                  # Orchestration — Producer-consumer CLI orchestrator
+├── keyword_generator.py         # Support     — Generates combinatorial_keywords.txt
 ├── best.pt                      # Trained YOLOv8 weights (not in repo)
 ├── combinatorial_keywords.txt   # 2,047 search queries
 ├── urls.txt                     # Manual URL list (alternative to search)
@@ -360,6 +376,7 @@ The pipeline is designed for long-running, interruptible operation:
 | Mechanism | How it works |
 |---|---|
 | **`discovered_videos` table** | Acts as a persistent work queue. Status = `pending` → `processing` → `completed` / `failed`. |
+| **In-memory `Queue`** | Signals worker threads the moment the producer finds a new video, for low-latency pickup within a single run (see diagram above — `Queue` and `Database` are separate components). |
 | **Atomic claiming** | Workers use `FOR UPDATE SKIP LOCKED` — multiple threads can claim different videos without contention. |
 | **Crash recovery** | On startup, any rows stuck in `processing` are automatically reset to `pending`. |
 | **`--workers-only` flag** | Re-process pending videos without re-running the search phase. |
